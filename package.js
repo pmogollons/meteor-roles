@@ -11,31 +11,27 @@ Package.onUse(function (api) {
   const both = ['client', 'server'];
 
   api.use([
-    'underscore',
     'ecmascript',
     'accounts-base',
-    'tracker',
-    'mongo',
-    'check'
   ], both);
 
   api.export('Roles');
 
-  api.addFiles('roles/roles_server.js', 'server');
   api.addFiles('roles/roles_common.js', both);
 });
 
 Package.onTest(function (api) {
-  api.versionsFrom("1.9");
+  api.versionsFrom(['1.9', '2.5.6']);
 
   const both = ['client', 'server'];
 
-  // `accounts-password` is included so `Meteor.users` exists
-
-  api.use(['alanning:roles',
-           'accounts-password@1.7.1 || 2.0.0',
-           'underscore',
-           'tinytest'], both);
+  api.use([
+    'ecmascript',
+    'alanning:roles',
+    'accounts-password',
+    'underscore',
+    'tinytest'
+  ], both);
 
   api.addFiles('roles/tests/client.js', 'client');
   api.addFiles('roles/tests/server.js', 'server');

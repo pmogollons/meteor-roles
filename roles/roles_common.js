@@ -1,5 +1,4 @@
 /* global Roles, _ */
-import { Mongo } from 'meteor/mongo';
 import { Meteor } from 'meteor/meteor';
 
 
@@ -8,14 +7,6 @@ import { Meteor } from 'meteor/meteor';
  *
  * @module Roles
  */
-
-/**
- * Roles collection documents consist only of an id and a role name.
- *   ex: { _id:<uuid>, name: "admin" }
- */
-if (!Meteor.roles) {
-  Meteor.roles = new Mongo.Collection('roles');
-}
 
 /**
  * Authorization package compatible with built-in Meteor accounts system.
@@ -37,199 +28,37 @@ Object.assign(Roles, {
    * can be used to apply blanket permissions across all groups.
    *
    * @example
-   *     Roles.addUsersToRoles(user, 'admin', Roles.GLOBAL_GROUP)
-   *     Roles.userIsInRole(user, 'admin') // => true
+   *     Roles.userIsInRole(user, 'admin', 'group') // => true
+   *     Roles.userIsInRole(user, 'support-staff', 'group') // => true
+   *     Roles.userIsInRole(user, 'admin', 'group') // => false
    *
-   *     Roles.setUserRoles(user, 'support-staff', Roles.GLOBAL_GROUP)
-   *     Roles.userIsInRole(user, 'support-staff') // => true
-   *     Roles.userIsInRole(user, 'admin') // => false
-   *
-   * @property GLOBAL_GROUP
    * @type String
    * @static
    * @final
    */
-  GLOBAL_GROUP: '__global_roles__',
 
-
-  /**
-   * Create a new role. Whitespace will be trimmed.
-   *
-   * @method createRole
-   * @param {String} role Name of role
-   * @param {Boolean} [unlessExists] Optional. If true, existence of a role will not throw an exception.
-   * @return {String} id of new role
-   */
-  createRole: function (role, unlessExists) {
-    let id;
-
-    if (!role || 'string' !== typeof role || role.trim().length === 0) {
-      return;
+  checkGroup(group) {
+    if (!group || 'string' !== typeof group) {
+      throw new Error ('Roles error: Invalid parameter \'group\' expected \'string\' type.');
     }
 
-    try {
-      id = Meteor.roles.insert({ 'name': role.trim() });
+    group = group.trim();
 
-      return id;
-    } catch (e) {
-      // (from Meteor accounts-base package, insertUserDoc func)
-      // XXX string parsing sucks, maybe
-      // https://jira.mongodb.org/browse/SERVER-3069 will get fixed one day
-      if (/E11000 duplicate key error.*(index.*roles|roles.*index).*name/.test(e.errmsg || e.err)) {
-        if (unlessExists) {
-          return null;
-        }
-
-        throw new Error('Role \'' + role.trim() + '\' already exists.');
-      } else {
-        throw e;
-      }
+    if ('$' === group[0]) {
+      throw new Error ('Roles error: groups can not start with \'$\'');
     }
+
+    if (!group.length) {
+      throw new Error ('Roles error: groups can not be empty');
+    }
+
+    group = group.replace(/\./g, '_');
+
+    return group;
   },
 
-  /**
-   * Delete an existing role.  Will throw "Role in use" error if any users
-   * are currently assigned to the target role.
-   *
-   * @method deleteRole
-   * @param {String} role Name of role
-   */
-  deleteRole: function (role) {
-    if (!role) {
-      return;
-    }
-
-    const foundExistingUser = Meteor.users.findOne(
-      { roles: { $in: [role] } },
-      { fields: { _id: 1 } }
-    );
-
-    if (foundExistingUser) {
-      throw new Meteor.Error(403, 'Role in use');
-    }
-
-    const thisRole = Meteor.roles.findOne({ name: role });
-
-    if (thisRole) {
-      Meteor.roles.remove({ _id: thisRole._id });
-    }
-  },
-
-  /**
-   * Add users to roles. Will create roles as needed.
-   *
-   * NOTE: Mixing grouped and non-grouped roles for the same user
-   *       is not supported and will throw an error.
-   *
-   * Makes 2 calls to database:
-   *  1. retrieve list of all existing roles
-   *  2. update users' roles
-   *
-   * @example
-   *     Roles.addUsersToRoles(userId, 'admin')
-   *     Roles.addUsersToRoles(userId, ['view-secrets'], 'example.com')
-   *     Roles.addUsersToRoles([user1, user2], ['user','editor'])
-   *     Roles.addUsersToRoles([user1, user2], ['glorious-admin', 'perform-action'], 'example.org')
-   *     Roles.addUsersToRoles(userId, 'admin', Roles.GLOBAL_GROUP)
-   *
-   * @method addUsersToRoles
-   * @param {Array|String} users User id(s) or object(s) with an _id field
-   * @param {Array|String} roles Name(s) of roles/permissions to add users to
-   * @param {String} [group] Optional group name. If supplied, roles will be
-   *                         specific to that group.
-   *                         Group names can not start with a '$' or contain
-   *                         null characters.  Periods in names '.' are
-   *                         automatically converted to underscores.
-   *                         The special group Roles.GLOBAL_GROUP provides
-   *                         a convenient way to assign blanket roles/permissions
-   *                         across all groups.  The roles/permissions in the
-   *                         Roles.GLOBAL_GROUP group will be automatically
-   *                         included in checks for any group.
-   */
-  addUsersToRoles: function (users, roles, group) {
-    // use Template pattern to update user roles
-    Roles._updateUserRoles(users, roles, group, Roles._update_$addToSet_fn);
-  },
-
-  /**
-   * Set a users roles/permissions.
-   *
-   * @example
-   *     Roles.setUserRoles(userId, 'admin')
-   *     Roles.setUserRoles(userId, ['view-secrets'], 'example.com')
-   *     Roles.setUserRoles([user1, user2], ['user','editor'])
-   *     Roles.setUserRoles([user1, user2], ['glorious-admin', 'perform-action'], 'example.org')
-   *     Roles.setUserRoles(userId, 'admin', Roles.GLOBAL_GROUP)
-   *
-   * @method setUserRoles
-   * @param {Array|String} users User id(s) or object(s) with an _id field
-   * @param {Array|String} roles Name(s) of roles/permissions to add users to
-   * @param {String} [group] Optional group name. If supplied, roles will be
-   *                         specific to that group.
-   *                         Group names can not start with '$'.
-   *                         Periods in names '.' are automatically converted
-   *                         to underscores.
-   *                         The special group Roles.GLOBAL_GROUP provides
-   *                         a convenient way to assign blanket roles/permissions
-   *                         across all groups.  The roles/permissions in the
-   *                         Roles.GLOBAL_GROUP group will be automatically
-   *                         included in checks for any group.
-   */
-  setUserRoles: function (users, roles, group) {
-    // use Template pattern to update user roles
-    Roles._updateUserRoles(users, roles, group, Roles._update_$set_fn);
-  },
-
-  /**
-   * Remove users from roles
-   *
-   * @example
-   *     Roles.removeUsersFromRoles(users.bob, 'admin')
-   *     Roles.removeUsersFromRoles([users.bob, users.joe], ['editor'])
-   *     Roles.removeUsersFromRoles([users.bob, users.joe], ['editor', 'user'])
-   *     Roles.removeUsersFromRoles(users.eve, ['user'], 'group1')
-   *
-   * @method removeUsersFromRoles
-   * @param {Array|String} users User id(s) or object(s) with an _id field
-   * @param {Array|String} roles Name(s) of roles to remove users from
-   * @param {String} [group] Optional. Group name. If supplied, only that
-   *                         group will have roles removed.
-   */
-  removeUsersFromRoles: function (users, roles, group) {
-    let update;
-
-    if (!users) {
-      throw new Error ('Missing \'users\' param');
-    }
-
-    if (!roles) {
-      throw new Error ('Missing \'roles\' param');
-    }
-
-    if (group) {
-      if ('string' !== typeof group) {
-        throw new Error ('Roles error: Invalid parameter \'group\'. Expected \'string\' type');
-      }
-
-      if ('$' === group[0]) {
-        throw new Error ('Roles error: groups can not start with \'$\'');
-      }
-
-      // convert any periods to underscores
-      group = group.replace(/\./g, '_');
-    }
-
-    // ensure arrays
-    if (!Array.isArray(users)) {
-      users = [users];
-    }
-
-    if (!Array.isArray(roles)) {
-      roles = [roles];
-    }
-
-    // ensure users is an array of user ids
-    users = _.reduce(users, function (memo, user) {
+  ensureUserIds(users) {
+    return users.reduce((memo, user) => {
       let _id;
 
       if ('string' === typeof user) {
@@ -244,27 +73,107 @@ Object.assign(Roles, {
 
       return memo;
     }, []);
+  },
 
-    // update all users, remove from roles set
+  /**
+   * Add users to roles.
+   *
+   * @example
+   *     Roles.addUsersToRoles(userId, 'admin', 'group')
+   *     Roles.addUsersToRoles(userId, ['view-secrets'], 'example.com')
+   *     Roles.addUsersToRoles([user1, user2], ['user','editor'], 'group')
+   *     Roles.addUsersToRoles([user1, user2], ['glorious-admin', 'perform-action'], 'example.org')
+   *
+   * @method addUsersToRoles
+   * @param {Array|String} users User id(s) or object(s) with an _id field
+   * @param {Array|String} roles Name(s) of roles/permissions to add users to
+   * @param {String} [group]Group name to add the role to. Roles will be
+   *                         specific to that group.
+   *                         Group names can not start with '$'.
+   *                         Periods in names '.' are automatically converted
+   *                         to underscores.
+   */
+  addUsersToRoles: function (users, roles, group) {
+    group = group = this.checkGroup(group);
 
-    if (group) {
-      update = { $pullAll: {} };
-      update.$pullAll['roles.'+group] = roles;
+    // use Template pattern to update user roles
+    Roles._updateUserRoles(users, roles, group, Roles._update_$addToSet_fn);
+  },
+
+  /**
+   * Set a users roles/permissions.
+   *
+   * @example
+   *     Roles.setUserRoles(userId, 'admin', 'group')
+   *     Roles.setUserRoles(userId, ['view-secrets'], 'example.com')
+   *     Roles.setUserRoles([user1, user2], ['user','editor'], 'group')
+   *     Roles.setUserRoles([user1, user2], ['glorious-admin', 'perform-action'], 'example.org')
+   *
+   * @method setUserRoles
+   * @param {Array|String} users User id(s) or object(s) with an _id field
+   * @param {Array|String} roles Name(s) of roles/permissions to add users to
+   * @param {String} group Group name to add the role to. Roles will be
+   *                         specific to that group.
+   *                         Group names can not start with '$'.
+   *                         Periods in names '.' are automatically converted
+   *                         to underscores.
+   */
+  setUserRoles: function (users, roles, group) {
+    group = this.checkGroup(group);
+
+    // use Template pattern to update user roles
+    Roles._updateUserRoles(users, roles, group, Roles._update_$set_fn);
+  },
+
+  /**
+   * Remove users from roles
+   *
+   * @example
+   *     Roles.removeUsersFromRoles(users.bob, 'admin', 'group')
+   *     Roles.removeUsersFromRoles([users.bob, users.joe], ['editor'], 'group')
+   *     Roles.removeUsersFromRoles([users.bob, users.joe], ['editor', 'user'], 'group')
+   *     Roles.removeUsersFromRoles(users.eve, ['user'], 'group1')
+   *
+   * @method removeUsersFromRoles
+   * @param {Array|String} users User id(s) or object(s) with an _id field
+   * @param {Array|String} roles Name(s) of roles to remove users from
+   * @param {String} group Group name. Only that group will have roles removed.
+   */
+  removeUsersFromRoles: function (users, roles, group) {
+    group = this.checkGroup(group);
+
+    if (!users) {
+      throw new Error ('Missing \'users\' param');
+    }
+
+    if (!roles) {
+      throw new Error ('Missing \'roles\' param');
+    }
+
+    if (!Array.isArray(roles)) {
+      roles = [roles];
+    }
+
+    let query;
+
+    // Is more performant to not use $in for single user _id
+    if (Array.isArray(users)) {
+      const userIds = this.ensureUserIds(users);
+
+      query = { _id: { $in: userIds } }
     } else {
-      update = { $pullAll: { roles: roles } };
+      query = { _id: users?._id || users };
     }
 
     try {
-      if (Meteor.isClient) {
-        // Iterate over each user to fulfill Meteor's 'one update per ID' policy
-        users.forEach((userId) => Meteor.users.update({ _id: userId }, update));
-      } else {
-        // On the server we can leverage MongoDB's $in operator for performance
-        Meteor.users.update({ _id:{ $in:users } }, update, { multi: true });
-      }
+      Meteor.users.update(query, {
+        $pullAll: {
+          [`roles.${group}`]: roles
+        }
+      }, { multi: true });
     } catch (ex) {
       if (ex.name === 'MongoError' && isMongoMixError(ex.errmsg || ex.err)) {
-        throw new Error (mixingGroupAndNonGroupErrorMsg);
+        throw new Error(mixingGroupAndNonGroupErrorMsg);
       }
 
       throw ex;
@@ -275,83 +184,45 @@ Object.assign(Roles, {
    * Check if user has specified permissions/roles
    *
    * @example
-   *     // non-group usage
-   *     Roles.userIsInRole(user, 'admin')
-   *     Roles.userIsInRole(user, ['admin','editor'])
-   *     Roles.userIsInRole(userId, 'admin')
-   *     Roles.userIsInRole(userId, ['admin','editor'])
-   *
-   *     // per-group usage
    *     Roles.userIsInRole(user,   ['admin','editor'], 'group1')
    *     Roles.userIsInRole(userId, ['admin','editor'], 'group1')
-   *     Roles.userIsInRole(userId, ['admin','editor'], Roles.GLOBAL_GROUP)
-   *
-   *     // this format can also be used as short-hand for Roles.GLOBAL_GROUP
-   *     Roles.userIsInRole(user, 'admin')
    *
    * @method userIsInRole
    * @param {String|Object} user User Id or actual user object
    * @param {String|Array} roles Name of role/permission or Array of
-   *                            roles/permissions to check against.  If array,
+   *                            roles/permissions to check against. If is an array,
    *                            will return true if user is in _any_ role.
-   * @param {String} [group] Optional. Name of group.  If supplied, limits check
-   *                         to just that group.
-   *                         The user's Roles.GLOBAL_GROUP will always be checked
-   *                         whether group is specified or not.
-   * @return {Boolean} true if user is in _any_ of the target roles
+   * @param {String} group Name of group. Limits check to just that group.
+   * @return {Boolean} true if user is in _any_ of the target roles.
    */
   userIsInRole: function (user, roles, group) {
-    let id,
-      found = false,
-      userRoles,
-      groupQuery;
+    group = this.checkGroup(group);
 
-    // ensure array to simplify code
-    if (!Array.isArray(roles)) {
-      roles = [roles];
-    }
+    let id;
+    let found = false;
 
     if (!user) {
       return false;
     }
 
-    if (group) {
-      if ('string' !== typeof group) {
-        return false;
-      }
-
-      if ('$' === group[0]) {
-        return false;
-      }
-
-      // convert any periods to underscores
-      group = group.replace(/\./g, '_');
-    }
-
     if ('object' === typeof user) {
-      userRoles = user.roles;
+      const userRoles = user.roles;
 
-      if (Array.isArray(userRoles)) {
-        return _.some(roles, function (role) {
-          return userRoles.includes(role);
-        });
-      } else if (userRoles && 'object' === typeof userRoles) {
-        // roles field is dictionary of groups
-        found = Array.isArray(userRoles[group]) && _.some(roles, function (role) {
-          return userRoles[group].includes(role);
-        });
+      if (userRoles && 'object' === typeof userRoles) {
+        let rolesArray = roles;
 
-        if (!found) {
-          // not found in regular group or group not specified.
-          // check Roles.GLOBAL_GROUP, if it exists
-          found = Array.isArray(userRoles[Roles.GLOBAL_GROUP]) && _.some(roles, function (role) {
-            return userRoles[Roles.GLOBAL_GROUP].includes(role);
-          });
+        if (!Array.isArray(rolesArray)) {
+          rolesArray = [rolesArray];
         }
+
+        if (Array.isArray(userRoles[group])) {
+          found = rolesArray.some((role) => userRoles[group].includes(role));
+        }
+
         return found;
       }
 
-      // missing roles field, try going direct via id
+      // Maybe the user doesn't have the roles field, get data from DB
       id = user._id;
     } else if ('string' === typeof user) {
       id = user;
@@ -361,35 +232,11 @@ Object.assign(Roles, {
       return false;
     }
 
-    const query = { _id: id, $or: [] };
-
-    // always check Roles.GLOBAL_GROUP
-    groupQuery = {};
-    groupQuery['roles.'+Roles.GLOBAL_GROUP] = { $in: roles };
-    query.$or.push(groupQuery);
-
-    if (group) {
-      // structure of query, when group specified including Roles.GLOBAL_GROUP
-      //   {_id: id,
-      //    $or: [
-      //      {'roles.group1':{$in: ['admin']}},
-      //      {'roles.__global_roles__':{$in: ['admin']}}
-      //    ]}
-      groupQuery = {};
-      groupQuery['roles.'+group] = { $in: roles };
-      query.$or.push(groupQuery);
-    } else {
-      // structure of query, where group not specified. includes
-      // Roles.GLOBAL_GROUP
-      //   {_id: id,
-      //    $or: [
-      //      {roles: {$in: ['admin']}},
-      //      {'roles.__global_roles__': {$in: ['admin']}}
-      //    ]}
-      query.$or.push({ roles: { $in: roles } });
-    }
-
-    found = Meteor.users.findOne(query, {
+    found = Meteor.users.findOne({
+      _id: id,
+      // Is more performant to not use $in for single role
+      [`roles.${group}`]: Array.isArray(roles) ? { $in: roles } : roles
+    }, {
       fields: { _id: 1 },
       readPreference: 'secondaryPreferred'
     });
@@ -402,35 +249,23 @@ Object.assign(Roles, {
    *
    * @method getRolesForUser
    * @param {String|Object} user User Id or actual user object
-   * @param {String} [group] Optional name of group to restrict roles to.
-   *                         User's Roles.GLOBAL_GROUP will also be included.
+   * @param {String} group Name of group to restrict roles to.
    * @return {Array} Array of user's roles, unsorted.
    */
   getRolesForUser: function (user, group) {
+    group = this.checkGroup(group);
+
     if (!user) {
       return [];
     }
 
-    if (group) {
-      if ('string' !== typeof group) {
-        return [];
-      }
-
-      if ('$' === group[0]) {
-        return [];
-      }
-
-      // convert any periods to underscores
-      group = group.replace(/\./g, '_');
-    }
-
     if ('string' === typeof user) {
-      user = Meteor.users.findOne({ _id: user }, {
-        fields: { roles: 1 },
+      user = Meteor.users.findOne({ _id: user?._id || user }, {
+        fields: { [`roles.${group}`]: 1 },
         readPreference: 'secondaryPreferred'
       });
     } else if ('object' !== typeof user) {
-      // invalid user object
+      // User should be an object or string
       return [];
     }
 
@@ -438,26 +273,7 @@ Object.assign(Roles, {
       return [];
     }
 
-    if (group) {
-      return _.union(user.roles[group] || [], user.roles[Roles.GLOBAL_GROUP] || []);
-    }
-
-    if (Array.isArray(user.roles)) {
-      return user.roles;
-    }
-
-    // using groups but group not specified. return global group, if exists
-    return user.roles[Roles.GLOBAL_GROUP] || [];
-  },
-
-  /**
-   * Retrieve set of all existing roles
-   *
-   * @method getAllRoles
-   * @return {Cursor} cursor of existing roles
-   */
-  getAllRoles: function () {
-    return Meteor.roles.find({}, { sort: { name: 1 } });
+    return user.roles[group] || [];
   },
 
   /**
@@ -472,67 +288,22 @@ Object.assign(Roles, {
    * @param {Array|String} role Name of role/permission.  If array, users
    *                            returned will have at least one of the roles
    *                            specified but need not have _all_ roles.
-   * @param {String} [group] Optional name of group to restrict roles to.
-   *                         User's Roles.GLOBAL_GROUP will also be checked.
+   * @param {String} group Name of group to restrict roles to.
    * @param {Object} [options] Optional options which are passed directly
    *                           through to `Meteor.users.find(query, options)`
    * @return {Cursor} cursor of users in role
    */
   getUsersInRole: function (role, group, options) {
-    let roles = role,
-      groupQuery;
+    group = this.checkGroup(group);
 
-    // ensure array to simplify query logic
-    if (!Array.isArray(roles)) {
-      roles = [roles];
-    }
-
-    if (group) {
-      if ('string' !== typeof group) {
-        throw new Error ('Roles error: Invalid parameter \'group\'. Expected \'string\' type');
-      }
-
-      if ('$' === group[0]) {
-        throw new Error ('Roles error: groups can not start with \'$\'');
-      }
-
-      // convert any periods to underscores
-      group = group.replace(/\./g, '_');
-    }
-
-    const query = { $or: [] };
-
-    // always check Roles.GLOBAL_GROUP
-    groupQuery = {};
-    groupQuery['roles.'+Roles.GLOBAL_GROUP] = { $in: roles };
-    query.$or.push(groupQuery);
-
-    if (group) {
-      // structure of query, when group specified including Roles.GLOBAL_GROUP
-      //   {
-      //    $or: [
-      //      {'roles.group1':{$in: ['admin']}},
-      //      {'roles.__global_roles__':{$in: ['admin']}}
-      //    ]}
-      groupQuery = {};
-      groupQuery['roles.'+group] = { $in: roles };
-      query.$or.push(groupQuery);
-    } else {
-      // structure of query, where group not specified. includes
-      // Roles.GLOBAL_GROUP
-      //   {
-      //    $or: [
-      //      {roles: {$in: ['admin']}},
-      //      {'roles.__global_roles__': {$in: ['admin']}}
-      //    ]}
-      query.$or.push({ roles: { $in: roles } });
-    }
-
-    return Meteor.users.find(query, {
+    // Is more performant to not use $in for single role
+    return Meteor.users.find({
+      [`roles.${group}`]: Array.isArray(role) ? { $in: role } : role
+    }, {
       readPreference: 'secondaryPreferred',
       ...options
     });
-  }, // end getUsersInRole
+  },
 
   /**
    * Retrieve users groups, if any
@@ -541,11 +312,9 @@ Object.assign(Roles, {
    * @param {String|Object} user User Id or actual user object
    * @param {String} [role] Optional name of roles to restrict groups to.
    *
-   * @return {Array} Array of user's groups, unsorted. Roles.GLOBAL_GROUP will be omitted
+   * @return {Array} Array of user's groups, unsorted.
    */
   getGroupsForUser: function (user, role) {
-    const userGroups = [];
-
     if (!user) {
       return [];
     }
@@ -570,22 +339,27 @@ Object.assign(Roles, {
       return [];
     }
 
-    //User has no roles or is not using groups
+    // User has no roles or is not using groups
     if (!user || !user.roles || Array.isArray(user.roles)) {
       return [];
     }
 
+    const groups = Object.keys(user.roles);
+
     if (role) {
-      _.each(user.roles, function(groupRoles, groupName) {
-        if (_.contains(groupRoles, role) && groupName !== Roles.GLOBAL_GROUP) {
-          userGroups.push(groupName);
+      const groupsWithRole = [];
+
+      groups.forEach((group) => {
+        if (user.roles[group]?.includes(role)) {
+          groupsWithRole.push(group);
         }
       });
-      return userGroups;
-    } else {
-      return _.without(_.keys(user.roles), Roles.GLOBAL_GROUP);
+
+      return groupsWithRole;
     }
-  }, //End getGroupsForUser
+
+    return groups;
+  },
 
 
   /**
@@ -595,23 +369,16 @@ Object.assign(Roles, {
    * @method _update_$set_fn
    * @protected
    * @param {Array} roles
-   * @param {String} [group]
+   * @param {String} group
    * @return {Object} update object for use in MongoDB update command
    */
   _update_$set_fn: function (roles, group) {
-    const update = {};
-
-    if (group) {
-      // roles is a key/value dict object
-      update.$set = {};
-      update.$set['roles.' + group] = roles;
-    } else {
-      // roles is an array of strings
-      update.$set = { roles: roles };
-    }
-
-    return update;
-  }, // end _update_$set_fn
+    return {
+      $set: {
+        [`roles.${group}`]: roles
+      }
+    };
+  },
 
   /**
    * Private function 'template' that uses $addToSet to construct an update
@@ -620,23 +387,16 @@ Object.assign(Roles, {
    * @method _update_$addToSet_fn
    * @protected
    * @param {Array} roles
-   * @param {String} [group]
+   * @param {String} group
    * @return {Object} update object for use in MongoDB update command
    */
   _update_$addToSet_fn: function (roles, group) {
-    const update = {};
-
-    if (group) {
-      // roles is a key/value dict object
-      update.$addToSet = {};
-      update.$addToSet['roles.' + group] = { $each: roles };
-    } else {
-      // roles is an array of strings
-      update.$addToSet = { roles: { $each: roles } };
-    }
-
-    return update;
-  }, // end _update_$addToSet_fn
+    return {
+      $addToSet: {
+        [`roles.${group}`]: { $each: roles }
+      }
+    };
+  },
 
 
   /**
@@ -647,48 +407,20 @@ Object.assign(Roles, {
    * @protected
    * @param {Array|String} users user id(s) or object(s) with an _id field
    * @param {Array|String} roles name(s) of roles/permissions to add users to
-   * @param {String} group Group name. If not null or undefined, roles will be
-   *                         specific to that group.
+   * @param {String} group Group name. Roles will be specific to that group.
    *                         Group names can not start with '$'.
    *                         Periods in names '.' are automatically converted
    *                         to underscores.
-   *                         The special group Roles.GLOBAL_GROUP provides
-   *                         a convenient way to assign blanket roles/permissions
-   *                         across all groups.  The roles/permissions in the
-   *                         Roles.GLOBAL_GROUP group will be automatically
-   *                         included in checks for any group.
    * @param {Function} updateFactory Func which returns an update object that
    *                         will be passed to Mongo.
    *   @param {Array} roles
    *   @param {String} [group]
    */
   _updateUserRoles: function (users, roles, group, updateFactory) {
-    if (!users) {
-      throw new Error ('Missing \'users\' param');
-    }
+    group = this.checkGroup(group);
 
     if (!roles) {
       throw new Error ('Missing \'roles\' param');
-    }
-
-    if (group) {
-      if ('string' !== typeof group) {
-        throw new Error ('Roles error: Invalid parameter \'group\'. Expected \'string\' type');
-      }
-
-      if ('$' === group[0]) {
-        throw new Error ('Roles error: groups can not start with \'$\'');
-      }
-
-      // convert any periods to underscores
-      group = group.replace(/\./g, '_');
-    }
-
-    let existingRoles;
-
-    // ensure arrays to simplify code
-    if (!Array.isArray(users)) {
-      users = [users];
     }
 
     if (!Array.isArray(roles)) {
@@ -696,7 +428,7 @@ Object.assign(Roles, {
     }
 
     // remove invalid roles
-    roles = _.reduce(roles, function (memo, role) {
+    roles = roles.reduce((memo, role) => {
       if (role
         && 'string' === typeof role
         && role.trim().length > 0) {
@@ -707,50 +439,23 @@ Object.assign(Roles, {
     }, []);
 
     // empty roles array is ok, since it might be a $set operation to clear roles
-    //if (roles.length === 0) return
+    // if (roles.length === 0) return
 
-    // ensure all roles exist in 'roles' collection
-    if (Meteor.isClient) {
-      existingRoles = _.reduce(Meteor.roles.find({}).fetch(), function (memo, role) {
-        memo[role.name] = true;
-        return memo;
-      }, {});
-      roles.forEach((role) => {
-        if (!existingRoles[role]) {
-          Roles.createRole(role);
-        }
-      });
+    let query;
+
+    // Is more performant to not use $in for single user _id
+    if (Array.isArray(users)) {
+      const userIds = this.ensureUserIds(users);
+
+      query = { _id: { $in: userIds } }
     } else {
-      roles.forEach((role) => Roles.createRole(role, true));
+      query = { _id: users?._id || users };
     }
 
-    // ensure users is an array of user ids
-    users = _.reduce(users, function (memo, user) {
-      let _id;
-
-      if ('string' === typeof user) {
-        memo.push(user);
-      } else if ('object' === typeof user) {
-        _id = user._id;
-
-        if ('string' === typeof _id) {
-          memo.push(_id);
-        }
-      }
-      return memo;
-    }, []);
-
-    // update all users
-    const update = updateFactory(roles, group);
+    const updateQuery = updateFactory(roles, group);
 
     try {
-      if (Meteor.isClient) {
-        // On client, iterate over each user to fulfill Meteor's one update per ID' policy
-        users.forEach((userId) => Meteor.users.update({ _id: userId }, update));
-      } else {
-        // On the server we can use MongoDB's $in operator for better performance
-        Meteor.users.update({ _id: { $in: users } }, update, { multi: true });
-      }
+      Meteor.users.update(query, updateQuery, { multi: true });
     } catch (ex) {
       if (ex.name === 'MongoError' && isMongoMixError(ex.errmsg || ex.err)) {
         throw new Error (mixingGroupAndNonGroupErrorMsg);
@@ -758,11 +463,11 @@ Object.assign(Roles, {
 
       throw ex;
     }
-  } // end _updateUserRoles
+  }
 });
 
 
-function isMongoMixError (errorMsg) {
+function isMongoMixError(errorMsg) {
   const expectedMessages = [
     'Cannot apply $addToSet modifier to non-array',
     'Cannot apply $addToSet to a non-array field',
@@ -775,11 +480,11 @@ function isMongoMixError (errorMsg) {
     'Cannot create field'
   ];
 
-  return _.some(expectedMessages, function (snippet) {
+  return expectedMessages.some((snippet) => {
     return strContains(errorMsg, snippet);
   });
 }
 
-function strContains (haystack, needle) {
+function strContains(haystack, needle) {
   return -1 !== haystack.indexOf(needle);
 }
