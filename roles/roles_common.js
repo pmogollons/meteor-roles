@@ -87,7 +87,7 @@ Object.assign(Roles, {
    * @method addUsersToRoles
    * @param {Array|String} users User id(s) or object(s) with an _id field
    * @param {Array|String} roles Name(s) of roles/permissions to add users to
-   * @param {String} [group]Group name to add the role to. Roles will be
+   * @param {String} group Group name to add the role to. Roles will be
    *                         specific to that group.
    *                         Group names can not start with '$'.
    *                         Periods in names '.' are automatically converted
