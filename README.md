@@ -1,5 +1,8 @@
-meteor-roles v3
+meteor-roles v1
 ===============
+
+**This version of the package is being maintained just for security and compatibility issues.
+Please consider the [latest version](https://github.com/Meteor-Community-Packages/meteor-roles).**
 
 Authorization package for Meteor - compatible with built-in accounts package.
 
@@ -53,10 +56,7 @@ Thanks to:
 <a id="roles-authorization" name="roles-authorization"></a>
 ### Authorization
 
-This package lets you attach roles to a user which you can then check against later when deciding whether to grant
-access to Meteor methods or publish data. The core concept is very simple, essentially you are creating an assignment
-of roles to a user and then checking for the existence of those roles later. This package provides helper methods
-to make the process of adding, removing, and verifying those roles easier.
+This package lets you attach permissions to a user which you can then check against later when deciding whether to grant access to Meteor methods or publish data.  The core concept is very simple, essentially you are attaching strings to a user object and then checking for the existence of those strings later. In some sense, it is very similar to tags on blog posts. This package provides helper methods to make the process of adding, removing, and verifying those permissions easier.
 
 <br />
 
@@ -84,14 +84,13 @@ with:
 ```javascript
 import { Roles } from 'meteor/alanning:roles';
 
-Roles.createRole('user');
-Roles.createRole('admin');
-Roles.createRole('USERS_VIEW');
-Roles.createRole('POST_EDIT');
-Roles.addRolesToParent('USERS_VIEW', 'admin');
-Roles.addRolesToParent('POST_EDIT', 'admin');
-Roles.addRolesToParent('POST_EDIT', 'user');
-```
+Sometimes it's useful to let a user have independent sets of permissions.  The `roles` package calls these independent sets, "groups" for lack of a better term.  You can think of them as "partitions" if that is more clear.  Users can have one set of permissions in group A and another set of permissions in group B.  Let's go through an example of this using soccer/football teams as groups.
+
+```js
+import { Roles } from 'meteor/alanning:roles'
+
+Roles.addUsersToRoles(joesUserId, ['manage-team','schedule-game'], 'manchester-united.com')
+Roles.addUsersToRoles(joesUserId, ['player','goalie'], 'real-madrid.com')
 
 <br />
 
@@ -108,13 +107,10 @@ Users can have both scope roles assigned, and global roles. Global roles are in 
 But scopes are independent from each other. Users can have one set of roles in scope A and another set
 of roles in scope B. Let's go through an example of this using soccer/football teams as scopes.
 
-```javascript
-Roles.addUsersToRoles(joesUserId, ['manage-team','schedule-game'], 'manchester-united.com');
-Roles.addUsersToRoles(joesUserId, ['player','goalie'], 'real-madrid.com');
+```js
+import { Roles } from 'meteor/alanning:roles'
 
-Roles.userIsInRole(joesUserId, 'manage-team', 'manchester-united.com'); // true
-Roles.userIsInRole(joesUserId, 'manage-team', 'real-madrid.com'); // false
-```
+Roles.addUsersToRoles(joesUserId, 'super-admin', Roles.GLOBAL_GROUP)
 
 In this example we can see that Joe manages Manchester United and plays for Real Madrid. By using scopes, we can
 assign roles independently and make sure that they don't get mixed up between scopes.
@@ -139,6 +135,40 @@ if (Roles.userIsInRole(joesUserId, ['manage-team', 'super-admin'], 'real-madrid.
   1. A new collection `Meteor.roleAssignment` contains the information which role has been assigned to which user.
   1. A new collection `Meteor.roles` contains a global list of defined role names.
   1. All existing roles are automatically published to the client.
+
+<br />
+
+† The type of the `roles` field depends on whether or not groups are used:
+```js
+import { Roles } from 'meteor/alanning:roles'
+
+Roles.addUsersToRoles(bobsUserId, ['manage-team','schedule-game'])
+// internal representation - no groups
+// user.roles = ['manage-team','schedule-game']
+
+Roles.addUsersToRoles(joesUserId, ['manage-team','schedule-game'], 'manchester-united.com')
+Roles.addUsersToRoles(joesUserId, ['player','goalie'], 'real-madrid.com')
+// internal representation - groups
+// NOTE: MongoDB uses periods to represent hierarchy so periods in group names
+//   are converted to underscores.
+//
+// user.roles = {
+//   'manchester-united_com': ['manage-team','schedule-game'],
+//   'real-madrid_com': ['player','goalie']
+// }
+```
+
+<em>Note: See the `addUsersToRoles` [documentation](http://alanning.github.io/meteor-roles/classes/Roles.html) for restrictions on group names.</em>
+
+
+†† The `Meteor.roles` collection is currently only for convenience on the UI-side and is not used functionally within this package.  In the future it may be used to support role hierarchies.  Since it is not currently required, it is not automatically published to the client.  Here's how you would publish it to every client without needing a subscription:
+
+```js
+// in server/publish.js
+Meteor.publish(null, function (){
+  return Meteor.roles.find({})
+})
+```
 
 <br />
 
@@ -230,6 +260,8 @@ Here are some potential use cases:
 
 Add users to roles:
 ```js
+import { Roles } from 'meteor/alanning:roles'
+
 var users = [
       {name:"Normal User",email:"normal@example.com",roles:[]},
       {name:"View-Secrets User",email:"view@example.com",roles:['view-secrets']},
@@ -273,9 +305,10 @@ Check user roles before publishing sensitive data:
 // server/publish.js
 import { Roles } from 'meteor/alanning:roles'
 
-// Give authorized users access to sensitive data by scope
-Meteor.publish('secrets', function (scope) {
-  check(scope, String);
+
+// Give authorized users access to sensitive data by group
+Meteor.publish('secrets', function (group) {
+  if (Roles.userIsInRole(this.userId, ['view-secrets','admin'], group)) {
 
   if (Roles.userIsInRole(this.userId, ['view-secrets','admin'], scope)) {
     
@@ -295,6 +328,8 @@ Meteor.publish('secrets', function (scope) {
 
 Prevent non-authorized users from creating new users:
 ```js
+import { Roles } from 'meteor/alanning:roles'
+
 Accounts.validateNewUser(function (user) {
   import { Roles } from 'meteor/alanning:roles'
   
@@ -376,6 +411,43 @@ Meteor.methods({
 
 <br />
 
+Perform complex permission checks in a declaritive way:
+
+(requires [mdg:validated-method](https://github.com/meteor/validated-method) and [didericis:permissions-mixin](https://github.com/Didericis/permissions-mixin)).
+
+```js
+// server/userMethods.js
+
+/**
+ * A user of role 'partner_admin' and group Roles.GLOBAL_GROUP can only create valid partner topics
+ * A user of role 'admin' and group Roles.GLOBAL_GROUP can create any arbitrary topic
+ *
+ * @param {Object} input Input parameters
+ * @param {String} input.title Topic title
+ */
+const createTopic = new ValidatedMethod({
+    name: 'CreateTopic',
+    mixins: [PermissionsMixin],
+    allow: [{
+        roles: ['partner_admin'],
+        group: Roles.GLOBAL_GROUP,
+        allow({ title }) { 
+          return VALID_PARTNER_TOPIC_TITLES.includes(title)
+        }
+    }, {
+        roles: ['admin'],
+        group: Roles.GLOBAL_GROUP
+    }],
+    validate: new SimpleSchema({
+        title: { type: String }
+    }).validator(),
+    run({ title }) {
+        return topics.insert({ title });
+    }
+});
+
+```
+
 -- **Client** --
 
 Client javascript does not by default have access to all the same Roles functions as the server unless you publish
@@ -456,12 +528,32 @@ The `examples` directory contains Meteor apps which show off the following featu
 * 'Sign-in required' app with up-front login page using `accounts-ui`
 * Client-side routing
 
+
+The only difference among the example apps is which routing package is used.
+
+View the `meteor-router` example app online @  <a href="http://roles.meteor.com/" target="_blank">http://roles.meteor.com/</a>
+
+
+_Iron Router or Flow Router_
+
   1. `git clone https://github.com/Meteor-Community-Packages/meteor-roles.git`
-  2. choose an example, eg.
+  2. either
     * `cd meteor-roles/examples/iron-router` or
     * `cd meteor-roles/examples/flow-router`
   3. `meteor`
   4. point browser to `http://localhost:3000`
+
+<br />
+
+
+  1. install [Meteorite][1]
+  2. `git clone https://github.com/Meteor-Community-Packages/meteor-roles.git`
+  3. either
+    * `cd meteor-roles/examples/router` or
+    * `cd meteor-roles/examples/mini-pages`
+  4. `mrt update`
+  5. `meteor`
+  6. point browser to `http://localhost:3000`
 
 <br />
 

@@ -20,3 +20,7 @@ docs/
 node_modules/
 .npm/
 .coverage/
+
+.idea/
+
+roles/.build*
