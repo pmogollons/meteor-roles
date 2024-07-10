@@ -1,12 +1,12 @@
 Package.describe({
   summary: "Authorization package for Meteor",
-  version: "2.0.0",
+  version: "3.0.0",
   git: "https://github.com/pmogollons/meteor-roles.git",
   name: "alanning:roles"
 });
 
 Package.onUse(function (api) {
-  api.versionsFrom(['1.9', '2.5.6']);
+  api.versionsFrom(['1.9', '2.5.6', '3.0-rc.4']);
 
   const both = ['client', 'server'];
 
@@ -21,7 +21,7 @@ Package.onUse(function (api) {
 });
 
 Package.onTest(function (api) {
-  api.versionsFrom(['1.9', '2.5.6']);
+  api.versionsFrom(['1.9', '2.5.6', '3.0-rc.4']);
 
   const both = ['client', 'server'];
 
