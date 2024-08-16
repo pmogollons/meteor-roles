@@ -1,38 +1,34 @@
 Package.describe({
   summary: "Authorization package for Meteor",
-  version: "3.0.0",
+  version: "1.0.0",
   git: "https://github.com/pmogollons/meteor-roles.git",
-  name: "alanning:roles"
+  name: "pmogollons:roles",
 });
 
 Package.onUse(function (api) {
-  api.versionsFrom(['1.9', '2.5.6', '3.0-rc.4']);
-
-  const both = ['client', 'server'];
+  api.versionsFrom("3.0");
 
   api.use([
-    'ecmascript',
-    'accounts-base',
-  ], both);
+    "typescript",
+    "zodern:types@1.0.13",
+    "accounts-base",
+  ]);
 
-  api.export('Roles');
-
-  api.addFiles('roles/roles_common.js', both);
+  api.mainModule("roles/roles_common.ts", "client");
+  api.mainModule("roles/roles_common.ts", "server");
 });
 
 Package.onTest(function (api) {
-  api.versionsFrom(['1.9', '2.5.6', '3.0-rc.4']);
-
-  const both = ['client', 'server'];
+  api.versionsFrom("3.0");
 
   api.use([
-    'ecmascript',
-    'alanning:roles',
-    'accounts-password',
-    'underscore',
-    'tinytest'
-  ], both);
+    "ecmascript",
+    "pmogollons:roles",
+    "accounts-password",
+    "underscore",
+    "tinytest",
+  ]);
 
-  api.addFiles('roles/tests/client.js', 'client');
-  api.addFiles('roles/tests/server.js', 'server');
+  api.addFiles("roles/tests/client.js", "client");
+  api.addFiles("roles/tests/server.js", "server");
 });

@@ -1,12 +1,13 @@
-/* global Roles, _ */
 import { Meteor } from "meteor/meteor";
 
 
-/**
- * Provides functions related to user authorization. Compatible with built-in Meteor accounts packages.
- *
- * @module Roles
- */
+type User = {
+  _id: string;
+  [key: string]: any;
+};
+
+type Users = string[] | User[] | string | User;
+type Roles = string[] | string;
 
 /**
  * Authorization package compatible with built-in Meteor accounts system.
@@ -16,28 +17,8 @@ import { Meteor } from "meteor/meteor";
  * @class Roles
  * @constructor
  */
-if ("undefined" === typeof Roles) {
-  Roles = {};
-}
-
-const mixingGroupAndNonGroupErrorMsg = "Roles error: Can't mix grouped and non-grouped roles for same user";
-
-Object.assign(Roles, {
-  /**
-   * Constant used to reference the special 'global' group that
-   * can be used to apply blanket permissions across all groups.
-   *
-   * @example
-   *     Roles.userIsInRole(user, 'admin', 'group') // => true
-   *     Roles.userIsInRole(user, 'support-staff', 'group') // => true
-   *     Roles.userIsInRole(user, 'admin', 'group') // => false
-   *
-   * @type String
-   * @static
-   * @final
-   */
-
-  checkGroup(group) {
+export const Roles = {
+  checkGroup(group: string) {
     if (!group || "string" !== typeof group) {
       throw new Error ("Roles error: Invalid parameter 'group' expected 'string' type.");
     }
@@ -57,17 +38,15 @@ Object.assign(Roles, {
     return group;
   },
 
-  ensureUserIds(users) {
-    return users.reduce((memo, user) => {
-      let _id;
-
+  ensureUserIds(users: string[] | User[]) {
+    return users.reduce((memo: string[], user) => {
       if ("string" === typeof user) {
         memo.push(user);
       } else if ("object" === typeof user) {
-        _id = user._id;
+        const userId = user._id;
 
-        if ("string" === typeof _id) {
-          memo.push(_id);
+        if ("string" === typeof userId) {
+          memo.push(userId);
         }
       }
 
@@ -93,7 +72,7 @@ Object.assign(Roles, {
    *                         Periods in names '.' are automatically converted
    *                         to underscores.
    */
-  addUsersToRoles: async function (users, roles, group) {
+  addUsersToRoles: async function (users: Users, roles: Roles, group: string) {
     group = group = this.checkGroup(group);
 
     // use Template pattern to update user roles
@@ -118,7 +97,7 @@ Object.assign(Roles, {
    *                         Periods in names '.' are automatically converted
    *                         to underscores.
    */
-  setUserRoles: async function (users, roles, group) {
+  setUserRoles: async function (users: Users, roles: Roles, group: string) {
     group = this.checkGroup(group);
 
     // use Template pattern to update user roles
@@ -139,7 +118,7 @@ Object.assign(Roles, {
    * @param {Array|String} roles Name(s) of roles to remove users from
    * @param {String} group Group name. Only that group will have roles removed.
    */
-  removeUsersFromRoles: async function (users, roles, group) {
+  removeUsersFromRoles: async function (users: Users, roles: Roles, group: string) {
     group = this.checkGroup(group);
 
     if (!users) {
@@ -154,7 +133,7 @@ Object.assign(Roles, {
       roles = [roles];
     }
 
-    let query;
+    let query: { _id: string | { $in: any; }; };
 
     // Is more performant to not use $in for single user _id
     if (Array.isArray(users)) {
@@ -162,7 +141,9 @@ Object.assign(Roles, {
 
       query = { _id: { $in: userIds } };
     } else {
-      query = { _id: users?._id || users };
+      const userId = typeof users === "object" ? users._id : users;
+
+      query = { _id: userId };
     }
 
     try {
@@ -171,7 +152,7 @@ Object.assign(Roles, {
           [`roles.${group}`]: roles,
         },
       }, { multi: true });
-    } catch (ex) {
+    } catch (ex: any) {
       if (ex.name === "MongoError" && isMongoMixError(ex.errmsg || ex.err)) {
         throw new Error(mixingGroupAndNonGroupErrorMsg);
       }
@@ -195,7 +176,7 @@ Object.assign(Roles, {
    * @param {String} group Name of group. Limits check to just that group.
    * @return {Boolean} true if user is in _any_ of the target roles.
    */
-  userIsInRole: async function (user, roles, group) {
+  userIsInRole: async function (user: User | string, roles: Roles, group: string) {
     group = this.checkGroup(group);
 
     let id;
@@ -232,7 +213,7 @@ Object.assign(Roles, {
       return false;
     }
 
-    found = await Meteor.users.findOneAsync({
+    const userFound = await Meteor.users.findOneAsync({
       _id: id,
       // Is more performant to not use $in for single role
       [`roles.${group}`]: Array.isArray(roles) ? { $in: roles } : roles,
@@ -241,7 +222,7 @@ Object.assign(Roles, {
       readPreference: "secondaryPreferred",
     });
 
-    return !!found;
+    return !!userFound;
   },
 
   /**
@@ -252,15 +233,19 @@ Object.assign(Roles, {
    * @param {String} group Name of group to restrict roles to.
    * @return {Array} Array of user's roles, unsorted.
    */
-  getRolesForUser: async function (user, group) {
+  getRolesForUser: async function (user: User | string, group: string) {
     group = this.checkGroup(group);
 
     if (!user) {
       return [];
     }
 
-    if ("string" === typeof user) {
-      user = await Meteor.users.findOneAsync({ _id: user?._id || user }, {
+    let _user: User | undefined;
+
+    if ("string" === typeof user || "object" === typeof user) {
+      const userId = typeof user === "object" ? user._id : user;
+
+      _user = await Meteor.users.findOneAsync({ _id: userId }, {
         fields: { [`roles.${group}`]: 1 },
         readPreference: "secondaryPreferred",
       });
@@ -269,11 +254,11 @@ Object.assign(Roles, {
       return [];
     }
 
-    if (!user || !user.roles) {
+    if (!_user || !_user.roles) {
       return [];
     }
 
-    return user.roles[group] || [];
+    return _user.roles[group] || [];
   },
 
   /**
@@ -293,13 +278,14 @@ Object.assign(Roles, {
    *                           through to `Meteor.users.find(query, options)`
    * @return {Cursor} cursor of users in role
    */
-  getUsersInRole: function (role, group, options) {
+  getUsersInRole: function (role: Roles, group: string, options: Record<string, any> = {}) {
     group = this.checkGroup(group);
 
     // Is more performant to not use $in for single role
     return Meteor.users.find({
       [`roles.${group}`]: Array.isArray(role) ? { $in: role } : role,
     }, {
+      // @ts-expect-error readPreference is not in the type definition
       readPreference: "secondaryPreferred",
       ...options,
     });
@@ -314,7 +300,7 @@ Object.assign(Roles, {
    *
    * @return {Array} Array of user's groups, unsorted.
    */
-  getGroupsForUser: async function (user, role) {
+  getGroupsForUser: async function (user: User | string, role: string) {
     if (!user) {
       return [];
     }
@@ -329,8 +315,12 @@ Object.assign(Roles, {
       }
     }
 
-    if ("string" === typeof user) {
-      user = await Meteor.users.findOneAsync({ _id: user }, {
+    let _user: User | undefined;
+
+    if ("string" === typeof user || "object" === typeof user) {
+      const userId = typeof user === "object" ? user._id : user;
+
+      _user = await Meteor.users.findOneAsync({ _id: userId }, {
         fields: { roles: 1 },
         readPreference: "secondaryPreferred",
       });
@@ -340,17 +330,17 @@ Object.assign(Roles, {
     }
 
     // User has no roles or is not using groups
-    if (!user || !user.roles || Array.isArray(user.roles)) {
+    if (!_user || !_user.roles || Array.isArray(_user.roles)) {
       return [];
     }
 
-    const groups = Object.keys(user.roles);
+    const groups = Object.keys(_user.roles);
 
     if (role) {
-      const groupsWithRole = [];
+      const groupsWithRole: string[] = [];
 
       groups.forEach((group) => {
-        if (user.roles[group]?.includes(role)) {
+        if (_user.roles[group]?.includes(role)) {
           groupsWithRole.push(group);
         }
       });
@@ -372,7 +362,7 @@ Object.assign(Roles, {
    * @param {String} group
    * @return {Object} update object for use in MongoDB update command
    */
-  _update_$set_fn: function (roles, group) {
+  _update_$set_fn: function (roles: string[], group: string) {
     return {
       $set: {
         [`roles.${group}`]: roles,
@@ -390,7 +380,7 @@ Object.assign(Roles, {
    * @param {String} group
    * @return {Object} update object for use in MongoDB update command
    */
-  _update_$addToSet_fn: function (roles, group) {
+  _update_$addToSet_fn: function (roles: string[], group: string) {
     return {
       $addToSet: {
         [`roles.${group}`]: { $each: roles },
@@ -416,7 +406,7 @@ Object.assign(Roles, {
    *   @param {Array} roles
    *   @param {String} [group]
    */
-  _updateUserRoles: async function (users, roles, group, updateFactory) {
+  _updateUserRoles: async function (users: Users, roles: Roles, group: string, updateFactory: any) {
     group = this.checkGroup(group);
 
     if (!roles) {
@@ -428,7 +418,7 @@ Object.assign(Roles, {
     }
 
     // remove invalid roles
-    roles = roles.reduce((memo, role) => {
+    roles = roles.reduce((memo: string[], role) => {
       if (role
         && "string" === typeof role
         && role.trim().length > 0) {
@@ -449,14 +439,16 @@ Object.assign(Roles, {
 
       query = { _id: { $in: userIds } };
     } else {
-      query = { _id: users?._id || users };
+      const userId = typeof users === "object" ? users._id : users;
+
+      query = { _id: userId };
     }
 
     const updateQuery = updateFactory(roles, group);
 
     try {
       await Meteor.users.updateAsync(query, updateQuery, { multi: true });
-    } catch (ex) {
+    } catch (ex: any) {
       if (ex.name === "MongoError" && isMongoMixError(ex.errmsg || ex.err)) {
         throw new Error (mixingGroupAndNonGroupErrorMsg);
       }
@@ -464,10 +456,11 @@ Object.assign(Roles, {
       throw ex;
     }
   },
-});
+};
 
+const mixingGroupAndNonGroupErrorMsg = "Roles error: Can't mix grouped and non-grouped roles for same user";
 
-function isMongoMixError(errorMsg) {
+function isMongoMixError(errorMsg: string) {
   const expectedMessages = [
     "Cannot apply $addToSet modifier to non-array",
     "Cannot apply $addToSet to a non-array field",
@@ -485,6 +478,6 @@ function isMongoMixError(errorMsg) {
   });
 }
 
-function strContains(haystack, needle) {
+function strContains(haystack: string, needle: string) {
   return -1 !== haystack.indexOf(needle);
 }
